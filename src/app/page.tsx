@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { AlertCircle, Check, Download, Images, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -86,6 +86,15 @@ export default function Home() {
   const [job, setJob] = useState<JobResponse | null>(null);
   const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
   const [primeiras, setPrimeiras] = useState<number | "">(4);
+  const arrastoRef = useRef<{
+    ativo: boolean;
+    pointerId: number | null;
+    imagensAlternadas: Set<string>;
+  }>({
+    ativo: false,
+    pointerId: null,
+    imagensAlternadas: new Set(),
+  });
 
   const leilaoId = useMemo(() => job?.leilaoId || extrairIdLeilao(urlLeilao), [job?.leilaoId, urlLeilao]);
   const isLoading = !["aguardando", "concluido", "erro"].includes(status);
@@ -240,6 +249,61 @@ export default function Home() {
   function selecionarPrimeiras(quantidade: number) {
     setPrimeiras(quantidade);
     setSelecionadas(new Set(obterIdsPrimeiras(fotos, quantidade)));
+  }
+
+  function alternarImagemNoArrasto(id: string) {
+    if (arrastoRef.current.imagensAlternadas.has(id)) {
+      return;
+    }
+
+    arrastoRef.current.imagensAlternadas.add(id);
+    alternarImagem(id);
+  }
+
+  function iniciarArrastoImagem(event: React.PointerEvent<HTMLButtonElement>, id: string) {
+    if (isLoading || (event.pointerType === "mouse" && event.button !== 0)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    arrastoRef.current = {
+      ativo: true,
+      pointerId: event.pointerId,
+      imagensAlternadas: new Set(),
+    };
+    alternarImagemNoArrasto(id);
+  }
+
+  function continuarArrastoImagem(event: React.PointerEvent<HTMLButtonElement>) {
+    if (!arrastoRef.current.ativo || arrastoRef.current.pointerId !== event.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    const elemento = document.elementFromPoint(event.clientX, event.clientY);
+    const imagem = elemento?.closest<HTMLElement>("[data-imagem-id]");
+    const id = imagem?.dataset.imagemId;
+
+    if (id) {
+      alternarImagemNoArrasto(id);
+    }
+  }
+
+  function finalizarArrastoImagem(event: React.PointerEvent<HTMLButtonElement>) {
+    if (arrastoRef.current.pointerId !== event.pointerId) {
+      return;
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    arrastoRef.current = {
+      ativo: false,
+      pointerId: null,
+      imagensAlternadas: new Set(),
+    };
   }
 
   return (
@@ -450,13 +514,23 @@ export default function Home() {
                           <button
                             key={imagem.id}
                             type="button"
+                            data-imagem-id={imagem.id}
                             className={cn(
-                              "relative aspect-[4/3] overflow-hidden rounded-md border bg-muted text-left transition",
+                              "relative aspect-[4/3] touch-none select-none overflow-hidden rounded-md border bg-muted text-left transition",
                               ativa
                                 ? "border-primary ring-2 ring-primary"
                                 : "border-border opacity-60 hover:opacity-100",
                             )}
-                            onClick={() => alternarImagem(imagem.id)}
+                            onPointerDown={(event) => iniciarArrastoImagem(event, imagem.id)}
+                            onPointerMove={continuarArrastoImagem}
+                            onPointerUp={finalizarArrastoImagem}
+                            onPointerCancel={finalizarArrastoImagem}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                alternarImagem(imagem.id);
+                              }
+                            }}
                             aria-pressed={ativa}
                             disabled={isLoading}
                           >
