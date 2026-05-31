@@ -1,9 +1,13 @@
-import { suporteLeiloesConfig } from "./config";
+import { suporteLeiloesConfig, type SuporteLeiloesConfig } from "./config";
 
-export async function fetchJson<T>(url: string, token?: string, init?: RequestInit): Promise<T> {
+export async function fetchJson<T>(
+  url: string,
+  token?: string,
+  init?: RequestInit,
+  config: SuporteLeiloesConfig = suporteLeiloesConfig,
+): Promise<T> {
   const originHeaders = {
-    Origin: suporteLeiloesConfig.origin,
-    Referer: `${suporteLeiloesConfig.origin}/`,
+    ...(config.origin ? { Origin: config.origin, Referer: `${config.origin}/` } : {}),
   };
 
   const response = await fetch(url, {

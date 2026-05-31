@@ -22,6 +22,7 @@ export type JobStatus =
 
 export type ExtracaoJob = {
   id: string;
+  extratorId?: string;
   status: JobStatus;
   leilaoId?: string;
   totalLotes: number;
@@ -82,6 +83,7 @@ export function atualizarJob(jobId: string, patch: JobPatch) {
 export function serializarJob(job: ExtracaoJob) {
   return {
     id: job.id,
+    extratorId: job.extratorId,
     status: job.status,
     leilaoId: job.leilaoId,
     totalLotes: job.totalLotes,

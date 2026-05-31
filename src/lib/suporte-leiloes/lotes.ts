@@ -1,5 +1,5 @@
 import { fetchJson } from "./client";
-import { montarUrlApi, suporteLeiloesConfig } from "./config";
+import { montarUrlApi, suporteLeiloesConfig, type SuporteLeiloesConfig } from "./config";
 
 export type LoteResumo = {
   id: number | string;
@@ -93,8 +93,12 @@ function interpretarPagina(payload: unknown, page: number, limit: number): Pagin
   return { itens, total, hasNext };
 }
 
-export async function buscarTodosOsLotes(leilaoId: string, token: string): Promise<LoteResumo[]> {
-  const limit = suporteLeiloesConfig.pageLimit;
+export async function buscarTodosOsLotes(
+  leilaoId: string,
+  token: string,
+  config: SuporteLeiloesConfig = suporteLeiloesConfig,
+): Promise<LoteResumo[]> {
+  const limit = config.pageLimit;
   const lotes: LoteResumo[] = [];
   let page = 1;
   let hasNext = true;
@@ -107,8 +111,8 @@ export async function buscarTodosOsLotes(leilaoId: string, token: string): Promi
       descending: "false",
       search: "",
     });
-    const url = montarUrlApi(`/api/arrematantes/service/leiloes/${leilaoId}/lotes?${params}`);
-    const payload = await fetchJson<unknown>(url, token);
+    const url = montarUrlApi(`/api/arrematantes/service/leiloes/${leilaoId}/lotes?${params}`, config);
+    const payload = await fetchJson<unknown>(url, token, undefined, config);
     const pagina = interpretarPagina(payload, page, limit);
 
     lotes.push(...pagina.itens.map(normalizarLote).filter((lote): lote is LoteResumo => Boolean(lote)));
@@ -119,6 +123,10 @@ export async function buscarTodosOsLotes(leilaoId: string, token: string): Promi
   return lotes;
 }
 
-export async function buscarLoteDetalhado(loteId: string | number, token: string): Promise<unknown> {
-  return fetchJson<unknown>(montarUrlApi(`/api/arrematantes/service/lotes/${loteId}`), token);
+export async function buscarLoteDetalhado(
+  loteId: string | number,
+  token: string,
+  config: SuporteLeiloesConfig = suporteLeiloesConfig,
+): Promise<unknown> {
+  return fetchJson<unknown>(montarUrlApi(`/api/arrematantes/service/lotes/${loteId}`, config), token, undefined, config);
 }

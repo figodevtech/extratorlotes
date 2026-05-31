@@ -1,10 +1,10 @@
-import { montarUrlApi, suporteLeiloesConfig } from "./config";
+import { montarUrlApi, suporteLeiloesConfig, type SuporteLeiloesConfig } from "./config";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-export function normalizarUrlImagem(valor: string): string {
+export function normalizarUrlImagem(valor: string, config: SuporteLeiloesConfig = suporteLeiloesConfig): string {
   const trimmed = valor.trim();
   if (/^https?:\/\//i.test(trimmed)) {
     return trimmed;
@@ -12,7 +12,7 @@ export function normalizarUrlImagem(valor: string): string {
   if (trimmed.startsWith("//")) {
     return `https:${trimmed}`;
   }
-  return montarUrlApi(trimmed.startsWith("/") ? trimmed : `/${trimmed}`);
+  return montarUrlApi(trimmed.startsWith("/") ? trimmed : `/${trimmed}`, config);
 }
 
 export function extrairUrlsDasImagens(loteDetalhado: unknown): string[] {
@@ -49,11 +49,14 @@ export function extensaoImagem(url: string, contentType?: string | null): string
   return ".jpg";
 }
 
-export async function baixarImagem(url: string, token?: string): Promise<{ buffer: ArrayBuffer; contentType: string | null }> {
+export async function baixarImagem(
+  url: string,
+  token?: string,
+  config: SuporteLeiloesConfig = suporteLeiloesConfig,
+): Promise<{ buffer: ArrayBuffer; contentType: string | null }> {
   const response = await fetch(url, {
     headers: {
-      Origin: suporteLeiloesConfig.origin,
-      Referer: `${suporteLeiloesConfig.origin}/`,
+      ...(config.origin ? { Origin: config.origin, Referer: `${config.origin}/` } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     cache: "no-store",

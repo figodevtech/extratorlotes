@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { obterExtrator, type ExtratorId } from "@/lib/extratores";
 import { autenticarSuporteLeiloes } from "@/lib/suporte-leiloes/auth";
+import { obterConfigSuporteLeiloes } from "@/lib/suporte-leiloes/config";
 import { extrairUrlsDasImagens, sanitizarNomePasta } from "@/lib/suporte-leiloes/imagens";
 import { atualizarJob, criarJob, obterJob, serializarJob } from "@/lib/suporte-leiloes/jobs";
 import { buscarLoteDetalhado, buscarTodosOsLotes } from "@/lib/suporte-leiloes/lotes";
@@ -48,7 +49,7 @@ function validarExtrator(extratorId: ExtratorId) {
   return extrator;
 }
 
-function validarUrlLeiloesPb(urlLeilao: string) {
+function validarUrlSuporteLeiloes(urlLeilao: string, extratorId: ExtratorId) {
   let url: URL;
   try {
     url = new URL(urlLeilao);
@@ -57,7 +58,7 @@ function validarUrlLeiloesPb(urlLeilao: string) {
   }
 
   const hostname = url.hostname.replace(/^www\./, "");
-  if (hostname !== "leiloespb.com.br") {
+  if (extratorId === "leiloes-pb" && hostname !== "leiloespb.com.br") {
     throw new Error("Use apenas links do dominio leiloespb.com.br.");
   }
 
@@ -72,32 +73,34 @@ function validarUrlLeiloesPb(urlLeilao: string) {
 function erroAmigavel(error: unknown) {
   const mensagem = error instanceof Error ? error.message : "Erro inesperado ao processar o leilao.";
 
-  if (/SUPORTE_LEILOES_USERNAME|SUPORTE_LEILOES_PASSWORD|Login|token|401|403/i.test(mensagem)) {
-    return "Falha na autenticacao. Verifique usuario, senha, cliente e endpoint de login no .env.local.";
+  if (/SUPORTE_LEILOES_USERNAME|SUPORTE_LEILOES_PASSWORD|usuario e senha|Login|token|401|403/i.test(mensagem)) {
+    return "Falha na autenticacao. Verifique usuario, senha, cliente, origin e endpoint de login do cliente selecionado no .env.local.";
   }
 
   return mensagem;
 }
 
-async function executarListagemLeiloesPb(jobId: string, urlLeilao: string) {
+async function executarListagemSuporteLeiloes(jobId: string, urlLeilao: string, extratorId: ExtratorId) {
   try {
-    const leilaoId = validarUrlLeiloesPb(urlLeilao);
+    const config = obterConfigSuporteLeiloes(extratorId);
+    const leilaoId = validarUrlSuporteLeiloes(urlLeilao, extratorId);
     const nomePastaLeilao = extrairNomePastaLeilao(urlLeilao, leilaoId);
     atualizarJob(jobId, {
+      extratorId,
       status: "autenticando",
       leilaoId,
       percentual: 2,
       mensagem: "Autenticando...",
     });
 
-    const token = await autenticarSuporteLeiloes();
+    const token = await autenticarSuporteLeiloes(config);
     atualizarJob(jobId, {
       status: "buscando lotes",
       percentual: 5,
       mensagem: "Buscando lotes do leilao.",
     });
 
-    const lotes = await buscarTodosOsLotes(leilaoId, token);
+    const lotes = await buscarTodosOsLotes(leilaoId, token, config);
     if (lotes.length === 0) {
       throw new Error("O leilao informado nao possui lotes retornados pela API.");
     }
@@ -119,7 +122,7 @@ async function executarListagemLeiloesPb(jobId: string, urlLeilao: string) {
           mensagem: `Lendo fotos do lote ${lote.numero}.`,
         });
 
-        const detalhe = await buscarLoteDetalhado(lote.id, token);
+        const detalhe = await buscarLoteDetalhado(lote.id, token, config);
         const urls = extrairUrlsDasImagens(detalhe);
         totalImagens += urls.length;
 
@@ -176,6 +179,7 @@ async function executarGeracaoZip(jobId: string, imagensSelecionadas: string[]) 
   }
 
   try {
+    const config = obterConfigSuporteLeiloes((job.extratorId || "leiloes-pb") as ExtratorId);
     atualizarJob(jobId, {
       status: "gerando ZIP",
       percentual: 0,
@@ -200,6 +204,7 @@ async function executarGeracaoZip(jobId: string, imagensSelecionadas: string[]) 
           mensagem: progresso.loteAtual ? `Baixando fotos do lote ${progresso.loteAtual}.` : "Gerando ZIP.",
         });
       },
+      config,
     );
 
     atualizarJob(jobId, {
@@ -239,10 +244,10 @@ export async function POST(request: NextRequest) {
 
     const body = iniciarSchema.parse(payload);
     validarExtrator(body.extrator);
-    validarUrlLeiloesPb(body.urlLeilao);
+    validarUrlSuporteLeiloes(body.urlLeilao, body.extrator);
 
     const job = criarJob();
-    void executarListagemLeiloesPb(job.id, body.urlLeilao);
+    void executarListagemSuporteLeiloes(job.id, body.urlLeilao, body.extrator);
 
     return NextResponse.json(serializarJob(job), { status: 202 });
   } catch (error) {

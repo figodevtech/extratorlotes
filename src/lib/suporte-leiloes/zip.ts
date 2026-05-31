@@ -1,5 +1,5 @@
 import JSZip from "jszip";
-import { suporteLeiloesConfig } from "./config";
+import { suporteLeiloesConfig, type SuporteLeiloesConfig } from "./config";
 import { baixarImagem, extensaoImagem, extrairUrlsDasImagens, sanitizarNomePasta } from "./imagens";
 import type { LoteFotos } from "./jobs";
 import { buscarLoteDetalhado, type LoteResumo } from "./lotes";
@@ -40,6 +40,7 @@ export async function gerarZipFotosLeilao(
   lotes: LoteResumo[],
   token: string,
   onProgress?: (progresso: ProgressoExtracao) => void,
+  config: SuporteLeiloesConfig = suporteLeiloesConfig,
 ): Promise<{ buffer: Buffer; relatorio: RelatorioExtracao }> {
   const zip = new JSZip();
   const pastaLeilao = zip.folder(sanitizarNomePasta(nomePastaLeilao));
@@ -57,7 +58,7 @@ export async function gerarZipFotosLeilao(
     erros: [],
   };
 
-  await mapComConcorrencia(lotes, suporteLeiloesConfig.concorrenciaLotes, async (lote) => {
+  await mapComConcorrencia(lotes, config.concorrenciaLotes, async (lote) => {
     onProgress?.({
       loteAtual: lote.numero,
       lotesProcessados: relatorio.lotesProcessados,
@@ -67,7 +68,7 @@ export async function gerarZipFotosLeilao(
     });
 
     try {
-      const detalhe = await buscarLoteDetalhado(lote.id, token);
+      const detalhe = await buscarLoteDetalhado(lote.id, token, config);
       const urls = extrairUrlsDasImagens(detalhe);
       const loteNomeArquivo = sanitizarNomePasta(lote.numero);
 
@@ -75,9 +76,9 @@ export async function gerarZipFotosLeilao(
         relatorio.lotesSemImagem.push(lote.numero);
       }
 
-      await mapComConcorrencia(urls, suporteLeiloesConfig.concorrenciaImagens, async (url, index) => {
+      await mapComConcorrencia(urls, config.concorrenciaImagens, async (url, index) => {
         try {
-          const imagem = await baixarImagem(url, token);
+          const imagem = await baixarImagem(url, token, config);
           const extensao = extensaoImagem(url, imagem.contentType);
           pastaLeilao.file(`${loteNomeArquivo}${indiceParaLetras(index)}${extensao}`, Buffer.from(imagem.buffer));
           relatorio.totalImagens += 1;
@@ -119,6 +120,7 @@ export async function gerarZipFotosSelecionadas(
   lotesFotos: LoteFotos[],
   imagensSelecionadas: string[],
   onProgress?: (progresso: ProgressoExtracao) => void,
+  config: SuporteLeiloesConfig = suporteLeiloesConfig,
 ): Promise<{ buffer: Buffer; relatorio: RelatorioExtracao }> {
   const zip = new JSZip();
   const pastaLeilao = zip.folder(sanitizarNomePasta(nomePastaLeilao));
@@ -144,7 +146,7 @@ export async function gerarZipFotosSelecionadas(
     erros: [],
   };
 
-  await mapComConcorrencia(lotesComFotos, suporteLeiloesConfig.concorrenciaLotes, async (lote) => {
+  await mapComConcorrencia(lotesComFotos, config.concorrenciaLotes, async (lote) => {
     const loteNomeArquivo = sanitizarNomePasta(lote.numero);
 
     onProgress?.({
@@ -155,9 +157,9 @@ export async function gerarZipFotosSelecionadas(
       percentual: Math.round((relatorio.lotesProcessados / Math.max(1, lotesComFotos.length)) * 100),
     });
 
-    await mapComConcorrencia(lote.imagens, suporteLeiloesConfig.concorrenciaImagens, async (imagem, index) => {
+    await mapComConcorrencia(lote.imagens, config.concorrenciaImagens, async (imagem, index) => {
       try {
-        const arquivo = await baixarImagem(imagem.url);
+        const arquivo = await baixarImagem(imagem.url, undefined, config);
         const extensao = extensaoImagem(imagem.url, arquivo.contentType);
         pastaLeilao.file(`${loteNomeArquivo}${indiceParaLetras(index)}${extensao}`, Buffer.from(arquivo.buffer));
         relatorio.totalImagens += 1;

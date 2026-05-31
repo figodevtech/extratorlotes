@@ -1,6 +1,6 @@
 export const extratores = [
   { id: "leiloes-pb", nome: "Leilões PB", implementado: true },
-  { id: "golden-lance", nome: "Golden Lance", implementado: false },
+  { id: "golden-lance", nome: "Golden Lance", implementado: true },
   { id: "rogerio-menezes", nome: "Rogério Menezes", implementado: false },
 ] as const;
 
