@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { obterExtrator, type ExtratorId } from "@/lib/extratores";
+import { listarFotosParqueDosLeiloes, validarUrlParque } from "@/lib/parque-dos-leiloes/extrator";
+import { listarFotosRogerioMenezes, validarUrlRogerioMenezes } from "@/lib/rogerio-menezes/extrator";
 import { autenticarSuporteLeiloes } from "@/lib/suporte-leiloes/auth";
-import { obterConfigSuporteLeiloes } from "@/lib/suporte-leiloes/config";
+import { obterConfigSuporteLeiloes, type SuporteLeiloesConfig } from "@/lib/suporte-leiloes/config";
 import { extrairUrlsDasImagens, sanitizarNomePasta } from "@/lib/suporte-leiloes/imagens";
 import { atualizarJob, criarJob, obterJob, serializarJob } from "@/lib/suporte-leiloes/jobs";
 import { buscarLoteDetalhado, buscarTodosOsLotes } from "@/lib/suporte-leiloes/lotes";
@@ -13,7 +15,7 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 const iniciarSchema = z.object({
-  extrator: z.enum(["leiloes-pb", "golden-lance", "rogerio-menezes"]),
+  extrator: z.enum(["leiloes-pb", "golden-lance", "parque-dos-leiloes", "rogerio-menezes"]),
   urlLeilao: z.string().url("Informe uma URL valida."),
 });
 
@@ -78,6 +80,26 @@ function erroAmigavel(error: unknown) {
   }
 
   return mensagem;
+}
+
+function obterConfigDownload(jobExtratorId?: string): SuporteLeiloesConfig {
+  if (jobExtratorId === "parque-dos-leiloes" || jobExtratorId === "rogerio-menezes") {
+    return {
+      baseUrl: "",
+      authPath: "",
+      authMethod: "GET",
+      origin: "",
+      bearerToken: "",
+      username: "",
+      password: "",
+      client: "",
+      pageLimit: 50,
+      concorrenciaLotes: Number(process.env.EXTRATOR_CONCORRENCIA_LOTES || 3),
+      concorrenciaImagens: Number(process.env.EXTRATOR_CONCORRENCIA_IMAGENS || 5),
+    };
+  }
+
+  return obterConfigSuporteLeiloes((jobExtratorId || "leiloes-pb") as ExtratorId);
 }
 
 async function executarListagemSuporteLeiloes(jobId: string, urlLeilao: string, extratorId: ExtratorId) {
@@ -167,6 +189,112 @@ async function executarListagemSuporteLeiloes(jobId: string, urlLeilao: string, 
   }
 }
 
+async function executarListagemParqueDosLeiloes(jobId: string, urlLeilao: string) {
+  try {
+    const leilaoId = validarUrlParque(urlLeilao);
+    const nomePastaLeilao = `leilao-${leilaoId}`;
+
+    atualizarJob(jobId, {
+      extratorId: "parque-dos-leiloes",
+      status: "buscando lotes",
+      leilaoId,
+      percentual: 0,
+      mensagem: "Buscando lotes do leilao.",
+    });
+
+    const fotos = await listarFotosParqueDosLeiloes(leilaoId, (progresso) => {
+      atualizarJob(jobId, {
+        status: "buscando lotes",
+        loteAtual: progresso.loteAtual,
+        totalLotes: progresso.totalLotes,
+        lotesProcessados: progresso.lotesProcessados,
+        totalImagens: progresso.totalImagens,
+        percentual: progresso.percentual,
+        mensagem: progresso.loteAtual ? `Lendo fotos do lote ${progresso.loteAtual}.` : "Lendo fotos dos lotes.",
+      });
+    });
+
+    if (fotos.length === 0) {
+      throw new Error("Nenhum lote foi encontrado na pagina de detalhes do leilao.");
+    }
+
+    const totalImagens = fotos.reduce((total, lote) => total + lote.imagens.length, 0);
+
+    atualizarJob(jobId, {
+      status: "concluido",
+      percentual: 100,
+      totalLotes: fotos.length,
+      lotesProcessados: fotos.length,
+      totalImagens,
+      nomePastaLeilao,
+      fotos,
+      zipBuffer: undefined,
+      filename: undefined,
+      mensagem: "Fotos listadas. Selecione as imagens para download.",
+    });
+  } catch (error) {
+    const mensagem = erroAmigavel(error);
+    atualizarJob(jobId, {
+      status: "erro",
+      erro: mensagem,
+      mensagem,
+    });
+  }
+}
+
+async function executarListagemRogerioMenezes(jobId: string, urlLeilao: string) {
+  try {
+    const leilaoId = validarUrlRogerioMenezes(urlLeilao);
+    const nomePastaLeilao = `leilao-${leilaoId}-rogerio-menezes`;
+
+    atualizarJob(jobId, {
+      extratorId: "rogerio-menezes",
+      status: "buscando lotes",
+      leilaoId,
+      percentual: 0,
+      mensagem: "Buscando lotes do leilao.",
+    });
+
+    const fotos = await listarFotosRogerioMenezes(leilaoId, (progresso) => {
+      atualizarJob(jobId, {
+        status: "buscando lotes",
+        loteAtual: progresso.loteAtual,
+        totalLotes: progresso.totalLotes,
+        lotesProcessados: progresso.lotesProcessados,
+        totalImagens: progresso.totalImagens,
+        percentual: progresso.percentual,
+        mensagem: progresso.loteAtual ? `Lendo fotos do lote ${progresso.loteAtual}.` : "Lendo fotos dos lotes.",
+      });
+    });
+
+    if (fotos.length === 0) {
+      throw new Error("Nenhum lote foi encontrado na pagina do leilao.");
+    }
+
+    const totalImagens = fotos.reduce((total, lote) => total + lote.imagens.length, 0);
+
+    atualizarJob(jobId, {
+      status: "concluido",
+      percentual: 100,
+      totalLotes: fotos.length,
+      lotesProcessados: fotos.length,
+      totalImagens,
+      nomePastaLeilao,
+      fotos,
+      zipBuffer: undefined,
+      filename: undefined,
+      mensagem: "Fotos listadas. Selecione as imagens para download.",
+    });
+  } catch (error) {
+    const mensagem = erroAmigavel(error);
+    atualizarJob(jobId, {
+      status: "erro",
+      erro: mensagem,
+      mensagem,
+    });
+  }
+}
+
 async function executarGeracaoZip(jobId: string, imagensSelecionadas: string[]) {
   const job = obterJob(jobId);
   if (!job?.leilaoId || !job.nomePastaLeilao || !job.fotos) {
@@ -179,7 +307,7 @@ async function executarGeracaoZip(jobId: string, imagensSelecionadas: string[]) 
   }
 
   try {
-    const config = obterConfigSuporteLeiloes((job.extratorId || "leiloes-pb") as ExtratorId);
+    const config = obterConfigDownload(job.extratorId);
     atualizarJob(jobId, {
       status: "gerando ZIP",
       percentual: 0,
@@ -244,10 +372,18 @@ export async function POST(request: NextRequest) {
 
     const body = iniciarSchema.parse(payload);
     validarExtrator(body.extrator);
-    validarUrlSuporteLeiloes(body.urlLeilao, body.extrator);
 
     const job = criarJob();
-    void executarListagemSuporteLeiloes(job.id, body.urlLeilao, body.extrator);
+    if (body.extrator === "parque-dos-leiloes") {
+      validarUrlParque(body.urlLeilao);
+      void executarListagemParqueDosLeiloes(job.id, body.urlLeilao);
+    } else if (body.extrator === "rogerio-menezes") {
+      validarUrlRogerioMenezes(body.urlLeilao);
+      void executarListagemRogerioMenezes(job.id, body.urlLeilao);
+    } else {
+      validarUrlSuporteLeiloes(body.urlLeilao, body.extrator);
+      void executarListagemSuporteLeiloes(job.id, body.urlLeilao, body.extrator);
+    }
 
     return NextResponse.json(serializarJob(job), { status: 202 });
   } catch (error) {

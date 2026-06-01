@@ -1,7 +1,8 @@
 export const extratores = [
   { id: "leiloes-pb", nome: "Leilões PB", implementado: true },
   { id: "golden-lance", nome: "Golden Lance", implementado: true },
-  { id: "rogerio-menezes", nome: "Rogério Menezes", implementado: false },
+  { id: "parque-dos-leiloes", nome: "Parque dos Leilões", implementado: true },
+  { id: "rogerio-menezes", nome: "Rogério Menezes", implementado: true },
 ] as const;
 
 export type ExtratorId = (typeof extratores)[number]["id"];
