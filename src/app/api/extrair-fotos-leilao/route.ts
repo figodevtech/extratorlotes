@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createRequire } from "node:module";
 import { Readable } from "node:stream";
 import { z } from "zod";
 import { obterExtrator, type ExtratorId } from "@/lib/extratores";
@@ -12,9 +11,6 @@ import { atualizarJob, criarJob, obterJob, serializarJob } from "@/lib/suporte-l
 import { buscarLoteDetalhado, buscarTodosOsLotes } from "@/lib/suporte-leiloes/lotes";
 import { mapComConcorrencia } from "@/lib/suporte-leiloes/pool";
 import { gerarZipFotosSelecionadas } from "@/lib/suporte-leiloes/zip";
-
-const require = createRequire(import.meta.url);
-const archiver = require("archiver") as typeof import("archiver");
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -408,7 +404,7 @@ async function executarGeracaoZip(jobId: string, imagensSelecionadas: string[]) 
   }
 }
 
-function responderZipDireto(jobId: string, imagensSelecionadas: string[]) {
+async function responderZipDireto(jobId: string, imagensSelecionadas: string[]) {
   const job = obterJob(jobId);
   if (!job?.leilaoId || !job.nomePastaLeilao || !job.fotos) {
     return jsonCors(
@@ -423,7 +419,10 @@ function responderZipDireto(jobId: string, imagensSelecionadas: string[]) {
   const selecionadas = new Set(imagensSelecionadas);
   const nomePasta = sanitizarNomePasta(job.nomePastaLeilao);
   const filename = `${nomePasta}.zip`;
-  const archive = archiver("zip", { store: true, zlib: { level: 0 } });
+  const { ZipArchive } = (await import("archiver")) as unknown as {
+    ZipArchive: new (options: { store: boolean; zlib: { level: number } }) => import("archiver").Archiver;
+  };
+  const archive = new ZipArchive({ store: true, zlib: { level: 0 } });
   const stream = Readable.toWeb(archive) as ReadableStream<Uint8Array>;
 
   void (async () => {
@@ -491,7 +490,7 @@ export async function POST(request: NextRequest) {
 
     if (payload?.action === "baixar_zip_direto") {
       const body = baixarZipDiretoSchema.parse(payload);
-      return responderZipDireto(body.jobId, body.imagensSelecionadas);
+      return await responderZipDireto(body.jobId, body.imagensSelecionadas);
     }
 
     if (payload?.action === "gerar_zip") {
