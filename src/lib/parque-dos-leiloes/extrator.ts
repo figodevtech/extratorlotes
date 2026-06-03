@@ -1,11 +1,14 @@
 import axios from "axios";
 import * as cheerio from "cheerio";
 import type { LoteFotos } from "@/lib/suporte-leiloes/jobs";
+import { mapComConcorrencia } from "@/lib/suporte-leiloes/pool";
 
 const BASE_URL = "https://www.parquedosleiloes.com.br";
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36";
 const MAX_PAGINAS_DETALHES = 100;
+const CONCORRENCIA_LOTES = Number(process.env.EXTRATOR_SCRAPER_CONCORRENCIA_LOTES || 8);
+const DELAY_PAGINAS_MS = Number(process.env.EXTRATOR_SCRAPER_DELAY_PAGINAS_MS || 100);
 
 type HtmlResponse = {
   data: string;
@@ -143,14 +146,16 @@ export async function listarFotosParqueDosLeiloes(
       links.push(link);
     }
 
-    await delay(400);
+    if (DELAY_PAGINAS_MS > 0) {
+      await delay(DELAY_PAGINAS_MS);
+    }
   }
 
-  for (const [index, loteUrl] of links.entries()) {
+  let lotesProcessados = 0;
+  const resultados = await mapComConcorrencia(links, CONCORRENCIA_LOTES, async (loteUrl, index) => {
     const loteId = loteUrl.match(/\/lote\/(\d+)/)?.[1] || String(index + 1);
 
     try {
-      await delay(500);
       const loteHtml = await buscarHtml(loteUrl);
       const $ = cheerio.load(loteHtml);
       const numero = extrairNumeroLote($, index + 1);
@@ -160,25 +165,28 @@ export async function listarFotosParqueDosLeiloes(
       }));
 
       totalImagens += imagens.length;
-      fotos.push({ loteId, numero, imagens });
+      lotesProcessados += 1;
       onProgress?.({
         loteAtual: numero,
         totalLotes: links.length,
-        lotesProcessados: index + 1,
+        lotesProcessados,
         totalImagens,
-        percentual: Math.round(((index + 1) / Math.max(1, links.length)) * 100),
+        percentual: Math.round((lotesProcessados / Math.max(1, links.length)) * 100),
       });
+      return { loteId, numero, imagens };
     } catch {
-      fotos.push({ loteId, numero: index + 1, imagens: [] });
+      lotesProcessados += 1;
       onProgress?.({
         loteAtual: index + 1,
         totalLotes: links.length,
-        lotesProcessados: index + 1,
+        lotesProcessados,
         totalImagens,
-        percentual: Math.round(((index + 1) / Math.max(1, links.length)) * 100),
+        percentual: Math.round((lotesProcessados / Math.max(1, links.length)) * 100),
       });
+      return { loteId, numero: index + 1, imagens: [] };
     }
-  }
+  });
 
+  fotos.push(...resultados);
   return fotos;
 }
