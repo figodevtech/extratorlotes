@@ -66,12 +66,57 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function intervaloPolling(status: Status) {
+  return status === "gerando ZIP" ? 2500 : 1000;
+}
+
 function contarSelecionadas(selecionadas: Set<string>) {
   return selecionadas.size;
 }
 
 function obterIdsPrimeiras(fotos: LoteFotos[], quantidade: number) {
   return fotos.flatMap((lote) => lote.imagens.slice(0, quantidade).map((imagem) => imagem.id));
+}
+
+const API_PATH = "/api/extrair-fotos-leilao";
+const LOCAL_API_ENDPOINTS = [
+  "http://127.0.0.1:3000/api/extrair-fotos-leilao",
+  "http://localhost:3000/api/extrair-fotos-leilao",
+];
+
+function montarApiUrl(endpoint: string, query = "") {
+  return endpoint ? `${endpoint}${query}` : `${API_PATH}${query}`;
+}
+
+async function endpointLocalDisponivel(endpoint: string) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 900);
+
+  try {
+    const response = await fetch(`${endpoint}?health=1`, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+async function detectarApiEndpoint() {
+  if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+    return "";
+  }
+
+  for (const endpoint of LOCAL_API_ENDPOINTS) {
+    if (await endpointLocalDisponivel(endpoint)) {
+      return endpoint;
+    }
+  }
+
+  return "";
 }
 
 export default function Home() {
@@ -86,6 +131,7 @@ export default function Home() {
   const [job, setJob] = useState<JobResponse | null>(null);
   const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
   const [primeiras, setPrimeiras] = useState<number | "">(4);
+  const [apiEndpoint, setApiEndpoint] = useState("");
   const arrastoRef = useRef<{
     ativo: boolean;
     pointerId: number | null;
@@ -95,6 +141,7 @@ export default function Home() {
     pointerId: null,
     imagensAlternadas: new Set(),
   });
+  const downloadIniciadoRef = useRef(false);
 
   const leilaoId = useMemo(() => job?.leilaoId || extrairIdLeilao(urlLeilao), [job?.leilaoId, urlLeilao]);
   const isLoading = !["aguardando", "concluido", "erro"].includes(status);
@@ -102,7 +149,7 @@ export default function Home() {
   const totalFotos = fotos.reduce((total, lote) => total + lote.imagens.length, 0);
   const totalSelecionadas = contarSelecionadas(selecionadas);
 
-  function aplicarJob(proximoJob: JobResponse) {
+  function aplicarJob(proximoJob: JobResponse, endpoint = apiEndpoint) {
     setJob(proximoJob);
     setStatus(proximoJob.status);
     setProgress(proximoJob.percentual);
@@ -122,12 +169,23 @@ export default function Home() {
     }
 
     if (proximoJob.downloadDisponivel) {
-      setDownloadUrl(`/api/extrair-fotos-leilao?jobId=${proximoJob.id}&download=1`);
+      const url = montarApiUrl(endpoint, `?jobId=${proximoJob.id}&download=1`);
+      setDownloadUrl(url);
+
+      if (!downloadIniciadoRef.current) {
+        downloadIniciadoRef.current = true;
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = proximoJob.filename || "fotos-leilao.zip";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      }
     }
   }
 
-  async function consultarJob(jobId: string) {
-    const response = await fetch(`/api/extrair-fotos-leilao?jobId=${jobId}`, {
+  async function consultarJob(jobId: string, endpoint = apiEndpoint) {
+    const response = await fetch(montarApiUrl(endpoint, `?jobId=${jobId}`), {
       cache: "no-store",
     });
 
@@ -139,14 +197,14 @@ export default function Home() {
     return (await response.json()) as JobResponse;
   }
 
-  async function acompanharJob(jobId: string) {
-    let proximoJob = await consultarJob(jobId);
-    aplicarJob(proximoJob);
+  async function acompanharJob(jobId: string, endpoint = apiEndpoint) {
+    let proximoJob = await consultarJob(jobId, endpoint);
+    aplicarJob(proximoJob, endpoint);
 
     while (!["concluido", "erro"].includes(proximoJob.status)) {
-      await sleep(1000);
-      proximoJob = await consultarJob(jobId);
-      aplicarJob(proximoJob);
+      await sleep(intervaloPolling(proximoJob.status));
+      proximoJob = await consultarJob(jobId, endpoint);
+      aplicarJob(proximoJob, endpoint);
     }
   }
 
@@ -159,6 +217,7 @@ export default function Home() {
     setSelecionadas(new Set());
     setPrimeiras(4);
     setProgress(0);
+    downloadIniciadoRef.current = false;
 
     if (extrator === "leiloes-pb" && !leilaoId) {
       setStatus("erro");
@@ -167,10 +226,12 @@ export default function Home() {
     }
 
     try {
+      const endpoint = await detectarApiEndpoint();
+      setApiEndpoint(endpoint);
       setStatus("autenticando");
       setProgress(2);
 
-      const response = await fetch("/api/extrair-fotos-leilao", {
+      const response = await fetch(montarApiUrl(endpoint), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ extrator, urlLeilao }),
@@ -182,8 +243,8 @@ export default function Home() {
       }
 
       const proximoJob = (await response.json()) as JobResponse;
-      aplicarJob(proximoJob);
-      await acompanharJob(proximoJob.id);
+      aplicarJob(proximoJob, endpoint);
+      await acompanharJob(proximoJob.id, endpoint);
     } catch (error) {
       setStatus("erro");
       setProgress(0);
@@ -203,8 +264,10 @@ export default function Home() {
       setRelatorio(null);
       setStatus("gerando ZIP");
       setProgress(0);
+      downloadIniciadoRef.current = false;
 
-      const response = await fetch("/api/extrair-fotos-leilao", {
+      const endpoint = apiEndpoint;
+      const response = await fetch(montarApiUrl(endpoint), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -220,8 +283,8 @@ export default function Home() {
       }
 
       const proximoJob = (await response.json()) as JobResponse;
-      aplicarJob(proximoJob);
-      await acompanharJob(proximoJob.id);
+      aplicarJob(proximoJob, endpoint);
+      await acompanharJob(proximoJob.id, endpoint);
     } catch (error) {
       setStatus("erro");
       setProgress(0);

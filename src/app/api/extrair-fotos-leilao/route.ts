@@ -18,6 +18,23 @@ export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 export const revalidate = 0;
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Max-Age": "86400",
+};
+
+function jsonCors(data: unknown, init?: ResponseInit) {
+  return NextResponse.json(data, {
+    ...init,
+    headers: {
+      ...corsHeaders,
+      ...init?.headers,
+    },
+  });
+}
+
 const iniciarSchema = z.object({
   extrator: z.enum(["leiloes-pb", "golden-lance", "parque-dos-leiloes", "rogerio-menezes"]),
   urlLeilao: z.string().url("Informe uma URL valida."),
@@ -333,11 +350,19 @@ async function executarGeracaoZip(jobId: string, imagensSelecionadas: string[]) 
           lotesProcessados: progresso.lotesProcessados,
           totalImagens: progresso.totalImagens,
           percentual: progresso.percentual,
-          mensagem: progresso.loteAtual ? `Baixando fotos do lote ${progresso.loteAtual}.` : "Gerando ZIP.",
+          mensagem: progresso.loteAtual
+            ? `Baixando fotos do lote ${progresso.loteAtual}.`
+            : "Preparando arquivo ZIP para download.",
         });
       },
       config,
     );
+
+    atualizarJob(jobId, {
+      status: "gerando ZIP",
+      percentual: 99,
+      mensagem: "Preparando arquivo ZIP para download.",
+    });
 
     atualizarJob(jobId, {
       status: "concluido",
@@ -367,7 +392,7 @@ export async function POST(request: NextRequest) {
       const body = gerarZipSchema.parse(payload);
       const job = obterJob(body.jobId);
       if (!job) {
-        return NextResponse.json(
+      return jsonCors(
           {
             error:
               "Extracao nao encontrada ou expirada. Em producao, tente iniciar novamente; se persistir, configure armazenamento persistente de jobs.",
@@ -377,7 +402,7 @@ export async function POST(request: NextRequest) {
       }
 
       void executarGeracaoZip(body.jobId, body.imagensSelecionadas);
-      return NextResponse.json(serializarJob(job), { status: 202 });
+      return jsonCors(serializarJob(job), { status: 202 });
     }
 
     const body = iniciarSchema.parse(payload);
@@ -395,28 +420,32 @@ export async function POST(request: NextRequest) {
       void executarListagemSuporteLeiloes(job.id, body.urlLeilao, body.extrator);
     }
 
-    return NextResponse.json(serializarJob(job), { status: 202 });
+    return jsonCors(serializarJob(job), { status: 202 });
   } catch (error) {
     const mensagem = error instanceof Error ? error.message : "";
     const status = error instanceof z.ZodError ? 400 : mensagem.includes("ainda nao foi implementado") ? 501 : 500;
     const message =
       error instanceof z.ZodError ? "Selecione um extrator e informe um link valido." : erroAmigavel(error);
 
-    return NextResponse.json({ error: message }, { status });
+    return jsonCors({ error: message }, { status });
   }
 }
 
 export async function GET(request: NextRequest) {
+  if (request.nextUrl.searchParams.get("health") === "1") {
+    return jsonCors({ ok: true, runtime: "extrator-local-ou-vercel" }, { status: 200 });
+  }
+
   const jobId = request.nextUrl.searchParams.get("jobId");
   const download = request.nextUrl.searchParams.get("download");
 
   if (!jobId) {
-    return NextResponse.json({ error: "Informe o jobId." }, { status: 400 });
+    return jsonCors({ error: "Informe o jobId." }, { status: 400 });
   }
 
   const job = obterJob(jobId);
   if (!job) {
-    return NextResponse.json(
+    return jsonCors(
       {
         error:
           "Extracao nao encontrada ou expirada. Em producao, tente iniciar novamente; se persistir, configure armazenamento persistente de jobs.",
@@ -427,11 +456,12 @@ export async function GET(request: NextRequest) {
 
   if (download === "1") {
     if (job.status !== "concluido" || !job.zipBuffer) {
-      return NextResponse.json({ error: "O ZIP ainda nao esta pronto." }, { status: 409 });
+      return jsonCors({ error: "O ZIP ainda nao esta pronto." }, { status: 409 });
     }
 
     return new NextResponse(new Uint8Array(job.zipBuffer), {
       headers: {
+        ...corsHeaders,
         "Content-Type": "application/zip",
         "Content-Disposition": `attachment; filename="${job.filename || "fotos-leilao.zip"}"`,
         "Cache-Control": "no-store",
@@ -439,7 +469,14 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  return NextResponse.json(serializarJob(job), {
+  return jsonCors(serializarJob(job), {
     headers: { "Cache-Control": "no-store" },
+  });
+}
+
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: corsHeaders,
   });
 }

@@ -34,6 +34,10 @@ function indiceParaLetras(index: number): string {
   return letras;
 }
 
+function percentualAntesDoZip(processados: number, total: number): number {
+  return Math.min(98, Math.round((processados / Math.max(1, total)) * 98));
+}
+
 export async function gerarZipFotosLeilao(
   leilaoId: string,
   nomePastaLeilao: string,
@@ -64,7 +68,7 @@ export async function gerarZipFotosLeilao(
       lotesProcessados: relatorio.lotesProcessados,
       totalLotes: relatorio.totalLotes,
       totalImagens: relatorio.totalImagens,
-      percentual: Math.round((relatorio.lotesProcessados / Math.max(1, relatorio.totalLotes)) * 100),
+      percentual: percentualAntesDoZip(relatorio.lotesProcessados, relatorio.totalLotes),
     });
 
     try {
@@ -104,13 +108,19 @@ export async function gerarZipFotosLeilao(
         lotesProcessados: relatorio.lotesProcessados,
         totalLotes: relatorio.totalLotes,
         totalImagens: relatorio.totalImagens,
-        percentual: Math.round((relatorio.lotesProcessados / Math.max(1, relatorio.totalLotes)) * 100),
+        percentual: percentualAntesDoZip(relatorio.lotesProcessados, relatorio.totalLotes),
       });
     }
   });
 
   zip.file("relatorio.json", JSON.stringify(relatorio, null, 2));
-  const buffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  onProgress?.({
+    lotesProcessados: relatorio.lotesProcessados,
+    totalLotes: relatorio.totalLotes,
+    totalImagens: relatorio.totalImagens,
+    percentual: 99,
+  });
+  const buffer = await zip.generateAsync({ type: "nodebuffer", compression: "STORE" });
   return { buffer, relatorio };
 }
 
@@ -154,7 +164,7 @@ export async function gerarZipFotosSelecionadas(
       lotesProcessados: relatorio.lotesProcessados,
       totalLotes: lotesComFotos.length,
       totalImagens: relatorio.totalImagens,
-      percentual: Math.round((relatorio.lotesProcessados / Math.max(1, lotesComFotos.length)) * 100),
+      percentual: percentualAntesDoZip(relatorio.lotesProcessados, lotesComFotos.length),
     });
 
     await mapComConcorrencia(lote.imagens, config.concorrenciaImagens, async (imagem, index) => {
@@ -179,11 +189,17 @@ export async function gerarZipFotosSelecionadas(
       lotesProcessados: relatorio.lotesProcessados,
       totalLotes: lotesComFotos.length,
       totalImagens: relatorio.totalImagens,
-      percentual: Math.round((relatorio.lotesProcessados / Math.max(1, lotesComFotos.length)) * 100),
+      percentual: percentualAntesDoZip(relatorio.lotesProcessados, lotesComFotos.length),
     });
   });
 
   zip.file("relatorio.json", JSON.stringify(relatorio, null, 2));
-  const buffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  onProgress?.({
+    lotesProcessados: relatorio.lotesProcessados,
+    totalLotes: lotesComFotos.length,
+    totalImagens: relatorio.totalImagens,
+    percentual: 99,
+  });
+  const buffer = await zip.generateAsync({ type: "nodebuffer", compression: "STORE" });
   return { buffer, relatorio };
 }
