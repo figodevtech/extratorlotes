@@ -13,6 +13,10 @@ import { gerarZipFotosSelecionadas } from "@/lib/suporte-leiloes/zip";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
+export const preferredRegion = "gru1";
+export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
+export const revalidate = 0;
 
 const iniciarSchema = z.object({
   extrator: z.enum(["leiloes-pb", "golden-lance", "parque-dos-leiloes", "rogerio-menezes"]),
@@ -363,7 +367,13 @@ export async function POST(request: NextRequest) {
       const body = gerarZipSchema.parse(payload);
       const job = obterJob(body.jobId);
       if (!job) {
-        return NextResponse.json({ error: "Extracao nao encontrada ou expirada." }, { status: 404 });
+        return NextResponse.json(
+          {
+            error:
+              "Extracao nao encontrada ou expirada. Em producao, tente iniciar novamente; se persistir, configure armazenamento persistente de jobs.",
+          },
+          { status: 404 },
+        );
       }
 
       void executarGeracaoZip(body.jobId, body.imagensSelecionadas);
@@ -406,7 +416,13 @@ export async function GET(request: NextRequest) {
 
   const job = obterJob(jobId);
   if (!job) {
-    return NextResponse.json({ error: "Extracao nao encontrada ou expirada." }, { status: 404 });
+    return NextResponse.json(
+      {
+        error:
+          "Extracao nao encontrada ou expirada. Em producao, tente iniciar novamente; se persistir, configure armazenamento persistente de jobs.",
+      },
+      { status: 404 },
+    );
   }
 
   if (download === "1") {

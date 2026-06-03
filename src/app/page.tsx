@@ -246,6 +246,11 @@ export default function Home() {
     setPrimeiras("");
   }
 
+  function desmarcarTodas() {
+    setSelecionadas(new Set());
+    setPrimeiras("");
+  }
+
   function selecionarPrimeiras(quantidade: number) {
     setPrimeiras(quantidade);
     setSelecionadas(new Set(obterIdsPrimeiras(fotos, quantidade)));
@@ -475,6 +480,9 @@ export default function Home() {
                 <div className="flex flex-wrap items-center gap-2">
                   <Button variant="outline" onClick={selecionarTodas} disabled={isLoading}>
                     Selecionar Todas
+                  </Button>
+                  <Button variant="outline" onClick={desmarcarTodas} disabled={isLoading || totalSelecionadas === 0}>
+                    Desmarcar Todas
                   </Button>
                   <label className="flex items-center gap-2 text-sm font-medium">
                     Primeiras
