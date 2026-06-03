@@ -1,15 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createRequire } from "node:module";
+import { Readable } from "node:stream";
 import { z } from "zod";
 import { obterExtrator, type ExtratorId } from "@/lib/extratores";
 import { listarFotosParqueDosLeiloes, validarUrlParque } from "@/lib/parque-dos-leiloes/extrator";
 import { listarFotosRogerioMenezes, validarUrlRogerioMenezes } from "@/lib/rogerio-menezes/extrator";
 import { autenticarSuporteLeiloes } from "@/lib/suporte-leiloes/auth";
 import { obterConfigSuporteLeiloes, type SuporteLeiloesConfig } from "@/lib/suporte-leiloes/config";
-import { extrairUrlsDasImagens, sanitizarNomePasta } from "@/lib/suporte-leiloes/imagens";
+import { baixarImagem, extensaoImagem, extrairUrlsDasImagens, sanitizarNomePasta } from "@/lib/suporte-leiloes/imagens";
 import { atualizarJob, criarJob, obterJob, serializarJob } from "@/lib/suporte-leiloes/jobs";
 import { buscarLoteDetalhado, buscarTodosOsLotes } from "@/lib/suporte-leiloes/lotes";
 import { mapComConcorrencia } from "@/lib/suporte-leiloes/pool";
 import { gerarZipFotosSelecionadas } from "@/lib/suporte-leiloes/zip";
+
+const require = createRequire(import.meta.url);
+const archiver = require("archiver") as typeof import("archiver");
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -22,6 +27,7 @@ const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Expose-Headers": "Content-Disposition",
   "Access-Control-Max-Age": "86400",
 };
 
@@ -46,9 +52,27 @@ const gerarZipSchema = z.object({
   imagensSelecionadas: z.array(z.string()).min(1, "Selecione ao menos uma imagem."),
 });
 
+const baixarZipDiretoSchema = z.object({
+  action: z.literal("baixar_zip_direto"),
+  jobId: z.string().min(1),
+  imagensSelecionadas: z.array(z.string()).min(1, "Selecione ao menos uma imagem."),
+});
+
 export function extrairIdLeilao(url: string): string | null {
   const match = url.match(/\/leilao\/(\d+)/);
   return match ? match[1] : null;
+}
+
+function indiceParaLetras(index: number): string {
+  let valor = index;
+  let letras = "";
+
+  do {
+    letras = String.fromCharCode(97 + (valor % 26)) + letras;
+    valor = Math.floor(valor / 26) - 1;
+  } while (valor >= 0);
+
+  return letras;
 }
 
 function extrairNomePastaLeilao(urlLeilao: string, leilaoId: string): string {
@@ -384,9 +408,91 @@ async function executarGeracaoZip(jobId: string, imagensSelecionadas: string[]) 
   }
 }
 
+function responderZipDireto(jobId: string, imagensSelecionadas: string[]) {
+  const job = obterJob(jobId);
+  if (!job?.leilaoId || !job.nomePastaLeilao || !job.fotos) {
+    return jsonCors(
+      {
+        error: "A lista de fotos desta extracao nao esta disponivel. Liste as fotos novamente antes de baixar.",
+      },
+      { status: 404 },
+    );
+  }
+
+  const config = obterConfigDownload(job.extratorId);
+  const selecionadas = new Set(imagensSelecionadas);
+  const nomePasta = sanitizarNomePasta(job.nomePastaLeilao);
+  const filename = `${nomePasta}.zip`;
+  const archive = archiver("zip", { store: true, zlib: { level: 0 } });
+  const stream = Readable.toWeb(archive) as ReadableStream<Uint8Array>;
+
+  void (async () => {
+    const relatorio = {
+      leilaoId: job.leilaoId,
+      totalLotes: job.fotos?.length ?? 0,
+      lotesProcessados: 0,
+      totalImagens: 0,
+      lotesSemImagem: [] as Array<string | number>,
+      erros: [] as Array<{ lote?: string | number; tipo: string; url?: string; mensagem: string }>,
+    };
+
+    try {
+      for (const lote of job.fotos ?? []) {
+        const imagens = lote.imagens.filter((imagem) => selecionadas.has(imagem.id));
+        const loteNomeArquivo = sanitizarNomePasta(lote.numero);
+
+        if (imagens.length === 0) {
+          relatorio.lotesSemImagem.push(lote.numero);
+          relatorio.lotesProcessados += 1;
+          continue;
+        }
+
+        for (const [index, imagem] of imagens.entries()) {
+          try {
+            const arquivo = await baixarImagem(imagem.url, undefined, config);
+            const extensao = extensaoImagem(imagem.url, arquivo.contentType);
+            archive.append(Buffer.from(arquivo.buffer), {
+              name: `${nomePasta}/${loteNomeArquivo}${indiceParaLetras(index)}${extensao}`,
+            });
+            relatorio.totalImagens += 1;
+          } catch (error) {
+            relatorio.erros.push({
+              lote: lote.numero,
+              tipo: "download_imagem",
+              url: imagem.url,
+              mensagem: error instanceof Error ? error.message : "Erro ao baixar imagem",
+            });
+          }
+        }
+
+        relatorio.lotesProcessados += 1;
+      }
+
+      archive.append(JSON.stringify(relatorio, null, 2), { name: `${nomePasta}/relatorio.json` });
+      await archive.finalize();
+    } catch (error) {
+      archive.destroy(error instanceof Error ? error : new Error("Erro ao gerar ZIP."));
+    }
+  })();
+
+  return new Response(stream, {
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/zip",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
 export async function POST(request: NextRequest) {
   try {
     const payload = await request.json();
+
+    if (payload?.action === "baixar_zip_direto") {
+      const body = baixarZipDiretoSchema.parse(payload);
+      return responderZipDireto(body.jobId, body.imagensSelecionadas);
+    }
 
     if (payload?.action === "gerar_zip") {
       const body = gerarZipSchema.parse(payload);

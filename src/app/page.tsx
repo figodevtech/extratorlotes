@@ -88,6 +88,12 @@ function montarApiUrl(endpoint: string, query = "") {
   return endpoint ? `${endpoint}${query}` : `${API_PATH}${query}`;
 }
 
+function extrairFilename(response: Response) {
+  const contentDisposition = response.headers.get("content-disposition");
+  const match = contentDisposition?.match(/filename="?([^"]+)"?/i);
+  return match?.[1] || "fotos-leilao.zip";
+}
+
 async function endpointLocalDisponivel(endpoint: string) {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 900);
@@ -142,6 +148,7 @@ export default function Home() {
     imagensAlternadas: new Set(),
   });
   const downloadIniciadoRef = useRef(false);
+  const objectUrlRef = useRef("");
 
   const leilaoId = useMemo(() => job?.leilaoId || extrairIdLeilao(urlLeilao), [job?.leilaoId, urlLeilao]);
   const isLoading = !["aguardando", "concluido", "erro"].includes(status);
@@ -218,6 +225,10 @@ export default function Home() {
     setPrimeiras(4);
     setProgress(0);
     downloadIniciadoRef.current = false;
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = "";
+    }
 
     if (extrator === "leiloes-pb" && !leilaoId) {
       setStatus("erro");
@@ -263,15 +274,31 @@ export default function Home() {
       setDownloadUrl("");
       setRelatorio(null);
       setStatus("gerando ZIP");
-      setProgress(0);
+      setProgress(99);
       downloadIniciadoRef.current = false;
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = "";
+      }
+
+      setJob((atual) =>
+        atual
+          ? {
+              ...atual,
+              status: "gerando ZIP",
+              percentual: 99,
+              mensagem: "Preparando arquivo ZIP para download.",
+              filename: "",
+            }
+          : atual,
+      );
 
       const endpoint = apiEndpoint;
       const response = await fetch(montarApiUrl(endpoint), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "gerar_zip",
+          action: "baixar_zip_direto",
           jobId: job.id,
           imagensSelecionadas: Array.from(selecionadas),
         }),
@@ -282,9 +309,33 @@ export default function Home() {
         throw new Error(payload?.error || "Nao foi possivel iniciar o download.");
       }
 
-      const proximoJob = (await response.json()) as JobResponse;
-      aplicarJob(proximoJob, endpoint);
-      await acompanharJob(proximoJob.id, endpoint);
+      const arquivo = await response.blob();
+      const proximoFilename = extrairFilename(response);
+      const url = URL.createObjectURL(arquivo);
+      objectUrlRef.current = url;
+      downloadIniciadoRef.current = true;
+      setDownloadUrl(url);
+      setFilename(proximoFilename);
+      setStatus("concluido");
+      setProgress(100);
+      setJob((atual) =>
+        atual
+          ? {
+              ...atual,
+              status: "concluido",
+              percentual: 100,
+              filename: proximoFilename,
+              mensagem: "ZIP pronto para download.",
+            }
+          : atual,
+      );
+
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = proximoFilename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
     } catch (error) {
       setStatus("erro");
       setProgress(0);
