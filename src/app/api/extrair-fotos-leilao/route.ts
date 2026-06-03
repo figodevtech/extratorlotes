@@ -143,6 +143,19 @@ function obterConfigDownload(jobExtratorId?: string): SuporteLeiloesConfig {
   return obterConfigSuporteLeiloes((jobExtratorId || "leiloes-pb") as ExtratorId);
 }
 
+function obterConcorrenciaZipDireto(jobExtratorId?: string, config?: SuporteLeiloesConfig) {
+  const env = Number(process.env.EXTRATOR_ZIP_CONCORRENCIA_IMAGENS);
+  if (Number.isFinite(env) && env > 0) {
+    return env;
+  }
+
+  if (jobExtratorId === "parque-dos-leiloes" || jobExtratorId === "rogerio-menezes") {
+    return 10;
+  }
+
+  return config?.concorrenciaImagens || 5;
+}
+
 async function executarListagemSuporteLeiloes(jobId: string, urlLeilao: string, extratorId: ExtratorId) {
   try {
     const config = obterConfigSuporteLeiloes(extratorId);
@@ -416,6 +429,7 @@ async function responderZipDireto(jobId: string, imagensSelecionadas: string[]) 
   }
 
   const config = obterConfigDownload(job.extratorId);
+  const concorrenciaDownloads = obterConcorrenciaZipDireto(job.extratorId, config);
   const selecionadas = new Set(imagensSelecionadas);
   const nomePasta = sanitizarNomePasta(job.nomePastaLeilao);
   const filename = `${nomePasta}.zip`;
@@ -436,37 +450,49 @@ async function responderZipDireto(jobId: string, imagensSelecionadas: string[]) 
     };
 
     try {
+      const entradas: Array<{
+        lote: string | number;
+        url: string;
+        caminho: string;
+      }> = [];
+
       for (const lote of job.fotos ?? []) {
         const imagens = lote.imagens.filter((imagem) => selecionadas.has(imagem.id));
         const loteNomeArquivo = sanitizarNomePasta(lote.numero);
 
         if (imagens.length === 0) {
           relatorio.lotesSemImagem.push(lote.numero);
-          relatorio.lotesProcessados += 1;
           continue;
         }
 
-        for (const [index, imagem] of imagens.entries()) {
-          try {
-            const arquivo = await baixarImagem(imagem.url, undefined, config);
-            const extensao = extensaoImagem(imagem.url, arquivo.contentType);
-            archive.append(Buffer.from(arquivo.buffer), {
-              name: `${nomePasta}/${loteNomeArquivo}${indiceParaLetras(index)}${extensao}`,
-            });
-            relatorio.totalImagens += 1;
-          } catch (error) {
-            relatorio.erros.push({
-              lote: lote.numero,
-              tipo: "download_imagem",
-              url: imagem.url,
-              mensagem: error instanceof Error ? error.message : "Erro ao baixar imagem",
-            });
-          }
-        }
-
-        relatorio.lotesProcessados += 1;
+        entradas.push(
+          ...imagens.map((imagem, index) => ({
+            lote: lote.numero,
+            url: imagem.url,
+            caminho: `${nomePasta}/${loteNomeArquivo}${indiceParaLetras(index)}`,
+          })),
+        );
       }
 
+      await mapComConcorrencia(entradas, concorrenciaDownloads, async (entrada) => {
+        try {
+          const arquivo = await baixarImagem(entrada.url, undefined, config);
+          const extensao = extensaoImagem(entrada.url, arquivo.contentType);
+          archive.append(Buffer.from(arquivo.buffer), {
+            name: `${entrada.caminho}${extensao}`,
+          });
+          relatorio.totalImagens += 1;
+        } catch (error) {
+          relatorio.erros.push({
+            lote: entrada.lote,
+            tipo: "download_imagem",
+            url: entrada.url,
+            mensagem: error instanceof Error ? error.message : "Erro ao baixar imagem",
+          });
+        }
+      });
+
+      relatorio.lotesProcessados = relatorio.totalLotes;
       archive.append(JSON.stringify(relatorio, null, 2), { name: `${nomePasta}/relatorio.json` });
       await archive.finalize();
     } catch (error) {
