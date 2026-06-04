@@ -60,7 +60,11 @@ export function extrairIdLeilao(url: string): string | null {
 }
 
 function indiceParaLetras(index: number): string {
-  let valor = index;
+  if (index === 0) {
+    return "";
+  }
+
+  let valor = index - 1;
   let letras = "";
 
   do {
