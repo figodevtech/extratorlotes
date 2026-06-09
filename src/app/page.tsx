@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import { AlertCircle, Check, Download, Images, Loader2 } from "lucide-react";
+import { AlertCircle, Check, Download, Images, Loader2, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -94,13 +94,21 @@ function extrairFilename(response: Response) {
   return match?.[1] || "fotos-leilao.zip";
 }
 
-async function endpointLocalDisponivel(endpoint: string) {
+function montarAuthHeaders(authToken: string, headers?: HeadersInit): HeadersInit {
+  return {
+    ...headers,
+    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+  };
+}
+
+async function endpointLocalDisponivel(endpoint: string, authToken: string) {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 900);
 
   try {
     const response = await fetch(`${endpoint}?health=1`, {
       cache: "no-store",
+      headers: montarAuthHeaders(authToken),
       signal: controller.signal,
     });
     return response.ok;
@@ -111,13 +119,17 @@ async function endpointLocalDisponivel(endpoint: string) {
   }
 }
 
-async function detectarApiEndpoint() {
+async function detectarApiEndpoint(authToken: string) {
   if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
     return "";
   }
 
+  if (!authToken) {
+    return "";
+  }
+
   for (const endpoint of LOCAL_API_ENDPOINTS) {
-    if (await endpointLocalDisponivel(endpoint)) {
+    if (await endpointLocalDisponivel(endpoint, authToken)) {
       return endpoint;
     }
   }
@@ -138,6 +150,9 @@ export default function Home() {
   const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
   const [primeiras, setPrimeiras] = useState<number | "">(4);
   const [apiEndpoint, setApiEndpoint] = useState("");
+  const [usuario, setUsuario] = useState("");
+  const [authToken, setAuthToken] = useState("");
+  const [sessaoChecada, setSessaoChecada] = useState(false);
   const arrastoRef = useRef<{
     ativo: boolean;
     pointerId: number | null;
@@ -152,9 +167,40 @@ export default function Home() {
 
   const leilaoId = useMemo(() => job?.leilaoId || extrairIdLeilao(urlLeilao), [job?.leilaoId, urlLeilao]);
   const isLoading = !["aguardando", "concluido", "erro"].includes(status);
+  const sessaoPronta = sessaoChecada && Boolean(usuario);
   const fotos = job?.fotos ?? [];
   const totalFotos = fotos.reduce((total, lote) => total + lote.imagens.length, 0);
   const totalSelecionadas = contarSelecionadas(selecionadas);
+
+  useEffect(() => {
+    async function carregarSessao() {
+      try {
+        const response = await fetch("/api/auth/session", { cache: "no-store" });
+        if (!response.ok) {
+          window.location.href = "/login";
+          return;
+        }
+
+        const payload = (await response.json()) as {
+          username?: string;
+          name?: string;
+          nick?: string;
+          email?: string;
+          token?: string | null;
+        };
+        setUsuario(payload.name || payload.username || payload.nick || payload.email || "");
+        setAuthToken(payload.token || "");
+        setSessaoChecada(true);
+      } catch {
+        window.location.href = "/login";
+      }
+    }
+
+    void carregarSessao();
+    const interval = window.setInterval(carregarSessao, 10000);
+
+    return () => window.clearInterval(interval);
+  }, []);
 
   function aplicarJob(proximoJob: JobResponse, endpoint = apiEndpoint) {
     setJob(proximoJob);
@@ -194,6 +240,7 @@ export default function Home() {
   async function consultarJob(jobId: string, endpoint = apiEndpoint) {
     const response = await fetch(montarApiUrl(endpoint, `?jobId=${jobId}`), {
       cache: "no-store",
+      headers: montarAuthHeaders(authToken),
     });
 
     if (!response.ok) {
@@ -237,14 +284,14 @@ export default function Home() {
     }
 
     try {
-      const endpoint = await detectarApiEndpoint();
+      const endpoint = await detectarApiEndpoint(authToken);
       setApiEndpoint(endpoint);
       setStatus("autenticando");
       setProgress(2);
 
       const response = await fetch(montarApiUrl(endpoint), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: montarAuthHeaders(authToken, { "Content-Type": "application/json" }),
         body: JSON.stringify({ extrator, urlLeilao }),
       });
 
@@ -296,7 +343,7 @@ export default function Home() {
       const endpoint = apiEndpoint;
       const response = await fetch(montarApiUrl(endpoint), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: montarAuthHeaders(authToken, { "Content-Type": "application/json" }),
         body: JSON.stringify({
           action: "baixar_zip_direto",
           jobId: job.id,
@@ -341,6 +388,14 @@ export default function Home() {
       setProgress(0);
       setErro(error instanceof Error ? error.message : "Erro inesperado ao gerar o ZIP.");
     }
+  }
+
+  async function sair() {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
+    setUsuario("");
+    setAuthToken("");
+    setSessaoChecada(false);
+    window.location.href = "/login";
   }
 
   function alternarImagem(id: string) {
@@ -428,17 +483,26 @@ export default function Home() {
   return (
     <main className="min-h-screen px-4 py-8 sm:px-6 lg:px-8">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
-        <header className="space-y-2">
-          <div className="inline-flex items-center gap-2 rounded-md bg-accent px-3 py-1 text-sm font-medium text-accent-foreground">
-            <Images className="h-4 w-4" />
-            Multi-leiloes
+        <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-2">
+            <div className="inline-flex items-center gap-2 rounded-md bg-accent px-3 py-1 text-sm font-medium text-accent-foreground">
+              <Images className="h-4 w-4" />
+              Multi-leiloes
+            </div>
+            <h1 className="text-3xl font-semibold tracking-normal text-foreground sm:text-4xl">
+              Extrator de fotos de lotes
+            </h1>
+            <p className="max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
+              Liste as fotos, selecione as imagens desejadas e gere um ZIP no padrao configurado.
+            </p>
           </div>
-          <h1 className="text-3xl font-semibold tracking-normal text-foreground sm:text-4xl">
-            Extrator de fotos de lotes
-          </h1>
-          <p className="max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
-            Liste as fotos, selecione as imagens desejadas e gere um ZIP no padrao configurado.
-          </p>
+          <div className="flex items-center gap-3">
+            {usuario ? <span className="text-sm text-muted-foreground">{usuario}</span> : null}
+            <Button variant="outline" onClick={sair} className="sm:w-fit">
+              <LogOut className="h-4 w-4" />
+              Sair
+            </Button>
+          </div>
         </header>
 
         <section className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
@@ -457,7 +521,7 @@ export default function Home() {
                   className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                   value={extrator}
                   onChange={(event) => setExtrator(event.target.value as ExtratorId)}
-                  disabled={isLoading}
+                disabled={isLoading || !sessaoPronta}
                 >
                   {extratores.map((item) => (
                     <option key={item.id} value={item.id}>
@@ -476,12 +540,12 @@ export default function Home() {
                   placeholder="Cole aqui o link do leilao"
                   value={urlLeilao}
                   onChange={(event) => setUrlLeilao(event.target.value)}
-                  disabled={isLoading}
+                  disabled={isLoading || !sessaoPronta}
                 />
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row">
-                <Button onClick={listarFotos} disabled={isLoading} className="sm:w-fit">
+                <Button onClick={listarFotos} disabled={isLoading || !sessaoPronta} className="sm:w-fit">
                   {isLoading && status !== "gerando ZIP" ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
@@ -490,7 +554,11 @@ export default function Home() {
                   Listar fotos
                 </Button>
                 {fotos.length > 0 && !downloadUrl ? (
-                  <Button onClick={iniciarDownload} disabled={isLoading || totalSelecionadas === 0} className="sm:w-fit">
+                  <Button
+                    onClick={iniciarDownload}
+                    disabled={isLoading || !sessaoPronta || totalSelecionadas === 0}
+                    className="sm:w-fit"
+                  >
                     {status === "gerando ZIP" ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
