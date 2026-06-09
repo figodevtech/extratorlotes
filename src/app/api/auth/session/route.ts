@@ -9,7 +9,15 @@ export async function GET() {
   const session = await validarSessao(token);
 
   if (!session) {
-    return NextResponse.json({ authenticated: false }, { status: 401 });
+    const response = NextResponse.json({ authenticated: false }, { status: 401 });
+    response.cookies.set(AUTH_COOKIE_NAME, "", {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: 0,
+    });
+    return response;
   }
 
   return NextResponse.json({

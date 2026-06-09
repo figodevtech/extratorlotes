@@ -172,12 +172,19 @@ export default function Home() {
   const totalFotos = fotos.reduce((total, lote) => total + lote.imagens.length, 0);
   const totalSelecionadas = contarSelecionadas(selecionadas);
 
+  function redirecionarLogin() {
+    setUsuario("");
+    setAuthToken("");
+    setSessaoChecada(false);
+    window.location.replace("/login");
+  }
+
   useEffect(() => {
     async function carregarSessao() {
       try {
         const response = await fetch("/api/auth/session", { cache: "no-store" });
         if (!response.ok) {
-          window.location.href = "/login";
+          redirecionarLogin();
           return;
         }
 
@@ -192,7 +199,7 @@ export default function Home() {
         setAuthToken(payload.token || "");
         setSessaoChecada(true);
       } catch {
-        window.location.href = "/login";
+        redirecionarLogin();
       }
     }
 
@@ -244,6 +251,9 @@ export default function Home() {
     });
 
     if (!response.ok) {
+      if (response.status === 401) {
+        redirecionarLogin();
+      }
       const payload = (await response.json().catch(() => null)) as { error?: string } | null;
       throw new Error(payload?.error || "Nao foi possivel consultar o progresso.");
     }
@@ -296,6 +306,10 @@ export default function Home() {
       });
 
       if (!response.ok) {
+        if (response.status === 401) {
+          redirecionarLogin();
+          return;
+        }
         const payload = (await response.json().catch(() => null)) as { error?: string } | null;
         throw new Error(payload?.error || "Nao foi possivel iniciar a listagem.");
       }
@@ -352,6 +366,10 @@ export default function Home() {
       });
 
       if (!response.ok) {
+        if (response.status === 401) {
+          redirecionarLogin();
+          return;
+        }
         const payload = (await response.json().catch(() => null)) as { error?: string } | null;
         throw new Error(payload?.error || "Nao foi possivel iniciar o download.");
       }
