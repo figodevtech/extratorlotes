@@ -43,12 +43,13 @@ function obterSupabaseKey() {
 
 function obterDatabaseUrl() {
   const url =
-    process.env.DATABASE_DIRECT_CONECTION_STRING ||
-    process.env.DATABASE_DIRECT_CONNECTION_STRING ||
+    process.env.DATABASE_AUTH_URL ||
+    process.env.DATABASE_TRANSACTION_POOLER ||
     process.env.DATABASE_SESSION_POOLER ||
-    process.env.DATABASE_TRANSACTION_POOLER;
+    process.env.DATABASE_DIRECT_CONECTION_STRING ||
+    process.env.DATABASE_DIRECT_CONNECTION_STRING;
   if (!url) {
-    throw new Error("Configure DATABASE_DIRECT_CONECTION_STRING com a conexao Postgres do Supabase.");
+    throw new Error("Configure DATABASE_AUTH_URL ou DATABASE_TRANSACTION_POOLER com a conexao Postgres do Supabase.");
   }
   return url;
 }
